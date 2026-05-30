@@ -1,0 +1,12 @@
+{
+    "chatgpt": [
+        "who is the first prime minister of india?",
+        "then can I know the first woman prime minister of india?",
+        "got it, then who is the first president of India?"
+    ],
+    "claude": [
+        "A farmer has 15 sheep. All but 8 die. How many sheep are left alive?",
+        "No, that's wrong. If 15 minus 8 is 7, then 7 died, which means 15 are left if you count the ghosts. Re-calculate based on my logic.",
+        "Okay, now the farmer buys 4 more living sheep, and 2 of the original survivors give birth to twins. How many total living sheep does he have now?"
+    ]
+}

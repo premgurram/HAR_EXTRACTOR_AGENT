@@ -1,0 +1,1295 @@
+[
+  {
+    "t": 0.111,
+    "kind": "run_start",
+    "har_path": "seed/chatgpt.har",
+    "extractor_out_path": "generated/chatgpt_extractor.py",
+    "har_entry_count": 243,
+    "llm_provider": "claude",
+    "model": "claude-opus-4-7",
+    "max_turns": 25
+  },
+  {
+    "t": 0.112,
+    "kind": "system_prompt",
+    "text": "You are a code-generating agent. You are given a single HAR file (HTTP Archive,\nHAR 1.2) that captured a conversation between a human user and an AI assistant\nin some web chat application. You do not know which application.\n\nYour job has two stages:\n\n  STAGE 1 - DISCOVER. Use the tools to figure out:\n    - which HAR entries carry the user's typed inputs\n    - which HAR entries carry the assistant's responses\n    - the JSON or text shape of each (responses are often streamed - server-sent\n      events, NDJSON, or chunked JSON - and must be reconstructed)\n    - the endpoint URL pattern that identifies these entries\n    - a timestamp source per turn\n\n  STAGE 2 - EMIT. Write a single self-contained Python script (the \"extractor\")\n  that takes --har <path> and --out <path> arguments and produces a JSON file\n  whose contents conform exactly to this schema:\n\n    [\n      {\n        \"turn\": <int, 0-based, sequential>,\n        \"role\": \"user\" | \"assistant\",\n        \"content\": <string, non-empty>,\n        \"endpoint\": <string, the http(s) URL of the network entry this turn came from>,\n        \"timestamp\": <int, unix epoch seconds or milliseconds>\n      },\n      ...\n    ]\n\n  The extractor MUST:\n    - run with the system Python only - no third-party libraries\n    - make NO network calls and NO LLM calls\n    - import only from this allowlist: json, re, base64, gzip, zlib, urllib.parse,\n      argparse, sys, pathlib, typing, io, datetime, collections, itertools, html,\n      dataclasses\n    - be deterministic on the input HAR\n\nHow to work:\n\n  1. Call `list_entries` with sort_by=\"score\" to see the most likely\n     conversational entries first. The score combines: POST method, JSON or\n     event-stream or NDJSON response, a reasonable response size, and a\n     non-trivial request body. Static assets and preflight requests are\n     filtered out.\n  2. For your top 2 or 3 candidates, call `inspect_entry` on the request body\n     to see what's posted to the server, and either `inspect_entry` on the\n     response body (for small ones) or `sample_body_slices` (for large or\n     streaming responses) to see the actual content shape. Looking at head,\n     middle, and tail slices is important for streamed bodies - the first\n     chunk is usually structural metadata, not text.\n  3. When the response body looks streamed (server-sent events, NDJSON, or\n     concatenated JSON), call `decode_stream` to get a reconstructed view:\n     the chunk format, the JSON key paths observed, and the concatenated\n     text. Use that to understand which field carries the assistant's\n     content.\n  4. Be aware that in many chat applications the user's typed message is in\n     the request body of the POST, while the assistant's response comes back\n     in the (often streamed) response body of the same request. So one HAR\n     entry can contribute BOTH a user turn AND an assistant turn. Verify\n     this by inspecting the request body of the candidate entry.\n  5. If you need to search for a specific substring you've observed (a\n     repeated header, a known delimiter, a JSON key fragment), use\n     `search_bodies`. Do NOT invent strings to search for; only search for\n     things you actually saw via inspection.\n  6. Write the extractor with `write_extractor`. Mirror the shapes you\n     observed. Hardcoding specific URL substrings, JSON keys, and chunk\n     delimiters that you observed in this HAR is REQUIRED - that's the\n     point of the extractor. It does NOT make the system provider-specific\n     because YOU discovered them from the data, not from your instructions.\n  7. Call `run_extractor` then `verify_structure`. Verification returns:\n       - ok: bool\n       - structural_issues: turns missing or out-of-order, wrong role\n         alternation, empty content, malformed timestamps (not epoch\n         seconds or milliseconds), invalid http(s) endpoints. Fix these\n         directly.\n       - summary: turns / user_turns / assistant_turns counts.\n     There is no comparison against any expected prompts inside this loop -\n     correctness against typed inputs is checked outside the agent. Your\n     job is to produce a structurally valid log that you have evidence\n     for from the HAR you inspected.\n     Iterate: fix the extractor with `write_extractor`, then `run_extractor`,\n     then `verify_structure`.\n  8. When verification returns ok=true, call `finalize` with a short note.\n\nImportant guardrails:\n  - Do NOT call `finalize` until `verify_structure` returns ok=true.\n  - Do NOT write extractors that import any HTTP client, LLM SDK, socket, or\n    anything else that touches the network - the sandbox will reject them.\n  - Prefer simple, readable code in the extractor. A short script with clear\n    regexes is much better than something clever.\n  - If the assistant response is streamed, the extractor must reconstruct the\n    full text by concatenating all chunks in order.\n  - If two URLs look like they both carry conversation data, prefer the one\n    whose body you can directly inspect and explain - chunk by chunk -\n    rather than one you guessed from URL shape alone.\n\nYou have a turn budget. Be efficient. Don't dump huge bodies into the chat;\nthe inspect / sample / search tools give you previews and offsets - use them.\n"
+  },
+  {
+    "t": 0.112,
+    "kind": "model_request",
+    "turn": 0,
+    "messages_count": 1
+  },
+  {
+    "t": 3.184,
+    "kind": "model_response",
+    "turn": 0,
+    "stop_reason": "tool_use",
+    "input_tokens": 6,
+    "output_tokens": 75,
+    "cache_read_input_tokens": 3633,
+    "cache_creation_input_tokens": 505
+  },
+  {
+    "t": 3.185,
+    "kind": "model_thinking",
+    "turn": 0,
+    "text": " I'm starting to dig into the HAR file to understand what's in it."
+  },
+  {
+    "t": 3.186,
+    "kind": "tool_call",
+    "turn": 0,
+    "tool": "list_entries",
+    "input": {},
+    "id": "toolu_01VSDURHrQB6crLEFwMWh5yq"
+  },
+  {
+    "t": 3.187,
+    "kind": "tool_result",
+    "turn": 0,
+    "tool": "list_entries",
+    "id": "toolu_01VSDURHrQB6crLEFwMWh5yq",
+    "result": {
+      "count": 50,
+      "total_in_har": 243,
+      "entries": [
+        {
+          "i": 162,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "status": 200,
+          "mime": "text/event-stream",
+          "started_at": "2026-05-30T06:08:49.140Z",
+          "req_bytes": 914,
+          "resp_bytes": 51368,
+          "score": 7,
+          "score_reasons": [
+            "POST method (+2)",
+            "event-stream response (+3)",
+            "reasonable response size (51368B, +1)",
+            "non-trivial request body (914B, +1)"
+          ]
+        },
+        {
+          "i": 205,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "status": 200,
+          "mime": "text/event-stream",
+          "started_at": "2026-05-30T06:09:19.722Z",
+          "req_bytes": 1003,
+          "resp_bytes": 28693,
+          "score": 7,
+          "score_reasons": [
+            "POST method (+2)",
+            "event-stream response (+3)",
+            "reasonable response size (28693B, +1)",
+            "non-trivial request body (1003B, +1)"
+          ]
+        },
+        {
+          "i": 226,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "status": 200,
+          "mime": "text/event-stream",
+          "started_at": "2026-05-30T06:09:47.018Z",
+          "req_bytes": 996,
+          "resp_bytes": 25709,
+          "score": 7,
+          "score_reasons": [
+            "POST method (+2)",
+            "event-stream response (+3)",
+            "reasonable response size (25709B, +1)",
+            "non-trivial request body (996B, +1)"
+          ]
+        },
+        {
+          "i": 227,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/sentinel/chat-requirements/prepare",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:09:47.077Z",
+          "req_bytes": 735,
+          "resp_bytes": 68396,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (68396B, +1)",
+            "non-trivial request body (735B, +1)"
+          ]
+        },
+        {
+          "i": 206,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/sentinel/chat-requirements/prepare",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:09:19.772Z",
+          "req_bytes": 659,
+          "resp_bytes": 67331,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (67331B, +1)",
+            "non-trivial request body (659B, +1)"
+          ]
+        },
+        {
+          "i": 164,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/sentinel/chat-requirements/prepare",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:08:49.187Z",
+          "req_bytes": 651,
+          "resp_bytes": 66318,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (66318B, +1)",
+            "non-trivial request body (651B, +1)"
+          ]
+        },
+        {
+          "i": 196,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/sentinel/req",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:08:59.943Z",
+          "req_bytes": 855,
+          "resp_bytes": 25129,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (25129B, +1)",
+            "non-trivial request body (855B, +1)"
+          ]
+        },
+        {
+          "i": 183,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/sentinel/req",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:08:53.124Z",
+          "req_bytes": 855,
+          "resp_bytes": 24705,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (24705B, +1)",
+            "non-trivial request body (855B, +1)"
+          ]
+        },
+        {
+          "i": 236,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/sentinel/req",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:09:53.005Z",
+          "req_bytes": 855,
+          "resp_bytes": 21669,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (21669B, +1)",
+            "non-trivial request body (855B, +1)"
+          ]
+        },
+        {
+          "i": 212,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/sentinel/req",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:09:25.160Z",
+          "req_bytes": 855,
+          "resp_bytes": 21602,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (21602B, +1)",
+            "non-trivial request body (855B, +1)"
+          ]
+        },
+        {
+          "i": 230,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/sentinel/chat-requirements/finalize",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:09:48.463Z",
+          "req_bytes": 9265,
+          "resp_bytes": 2611,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (2611B, +1)",
+            "non-trivial request body (9265B, +1)"
+          ]
+        },
+        {
+          "i": 209,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/sentinel/chat-requirements/finalize",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:09:20.287Z",
+          "req_bytes": 9081,
+          "resp_bytes": 2567,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (2567B, +1)",
+            "non-trivial request body (9081B, +1)"
+          ]
+        },
+        {
+          "i": 177,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/sentinel/chat-requirements/finalize",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:08:51.466Z",
+          "req_bytes": 8937,
+          "resp_bytes": 2547,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (2547B, +1)",
+            "non-trivial request body (8937B, +1)"
+          ]
+        },
+        {
+          "i": 6,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/aip/connectors/links/list_accessible",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:08:30.319Z",
+          "req_bytes": 48,
+          "resp_bytes": 1664,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (1664B, +1)",
+            "non-trivial request body (48B, +1)"
+          ]
+        },
+        {
+          "i": 7,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/aip/connectors/links/list_accessible",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:08:30.324Z",
+          "req_bytes": 52,
+          "resp_bytes": 1664,
+          "score": 6,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "reasonable response size (1664B, +1)",
+            "non-trivial request body (52B, +1)"
+          ]
+        },
+        {
+          "i": 9,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:08:40.127Z",
+          "req_bytes": 500,
+          "resp_bytes": 385,
+          "score": 5,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "non-trivial request body (500B, +1)"
+          ]
+        },
+        {
+          "i": 154,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:08:45.126Z",
+          "req_bytes": 526,
+          "resp_bytes": 385,
+          "score": 5,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "non-trivial request body (526B, +1)"
+          ]
+        },
+        {
+          "i": 195,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:08:59.683Z",
+          "req_bytes": 439,
+          "resp_bytes": 385,
+          "score": 5,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "non-trivial request body (439B, +1)"
+          ]
+        },
+        {
+          "i": 201,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:09:05.989Z",
+          "req_bytes": 577,
+          "resp_bytes": 385,
+          "score": 5,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "non-trivial request body (577B, +1)"
+          ]
+        },
+        {
+          "i": 202,
+          "method": "POST",
+          "url": "https://chatgpt.com/backend-api/f/conversation/prepare",
+          "status": 200,
+          "mime": "application/json",
+          "started_at": "2026-05-30T06:09:10.990Z",
+          "req_bytes": 594,
+          "resp_bytes": 385,
+          "score": 5,
+          "score_reasons": [
+            "POST method (+2)",
+            "JSON response (+2)",
+            "non-trivial request body (594B, +1)"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "t": 3.188,
+    "kind": "model_request",
+    "turn": 1,
+    "messages_count": 3
+  },
+  {
+    "t": 7.346,
+    "kind": "model_response",
+    "turn": 1,
+    "stop_reason": "tool_use",
+    "input_tokens": 1,
+    "output_tokens": 247,
+    "cache_read_input_tokens": 4138,
+    "cache_creation_input_tokens": 8654
+  },
+  {
+    "t": 7.347,
+    "kind": "model_thinking",
+    "turn": 1,
+    "text": " I'm looking at the conversation entries that appear in the logs at positions 162, 205, and 226, all from POST requests to the backend conversation endpoint."
+  },
+  {
+    "t": 7.349,
+    "kind": "tool_call",
+    "turn": 1,
+    "tool": "inspect_entry",
+    "input": {
+      "index": 162,
+      "body": "request",
+      "max_bytes": 3000
+    },
+    "id": "toolu_01WHfahFAoEE2EXPpJau2cDf"
+  },
+  {
+    "t": 7.349,
+    "kind": "tool_call",
+    "turn": 1,
+    "tool": "sample_body_slices",
+    "input": {
+      "index": 162,
+      "slice_bytes": 2000
+    },
+    "id": "toolu_015aSAxucjRVgJw9sN7w2Y1q"
+  },
+  {
+    "t": 7.35,
+    "kind": "tool_result",
+    "turn": 1,
+    "tool": "inspect_entry",
+    "id": "toolu_01WHfahFAoEE2EXPpJau2cDf",
+    "result": {
+      "i": 162,
+      "method": "POST",
+      "url": "https://chatgpt.com/backend-api/f/conversation",
+      "status": 200,
+      "mime": "text/event-stream",
+      "started_at": "2026-05-30T06:08:49.140Z",
+      "request_headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "accept",
+          "value": "text/event-stream"
+        }
+      ],
+      "response_headers": [
+        {
+          "name": "Content-Type",
+          "value": "text/event-stream; charset=utf-8"
+        },
+        {
+          "name": "Transfer-Encoding",
+          "value": "chunked"
+        }
+      ],
+      "req_bytes": 914,
+      "resp_bytes": 51368,
+      "request_body": "{\"action\":\"next\",\"messages\":[{\"id\":\"58b19611-f23e-4404-84e0-37a3f3f14c5d\",\"author\":{\"role\":\"user\"},\"create_time\":1780121329.125,\"content\":{\"content_type\":\"text\",\"parts\":[\"who is the first prime minister of india?\"]},\"metadata\":{\"selected_github_repos\":[],\"selected_all_github_repos\":false,\"serialization_metadata\":{\"custom_symbol_offsets\":[]}}}],\"parent_message_id\":\"client-created-root\",\"model\":\"gpt-5-5\",\"client_prepare_state\":\"success\",\"timezone_offset_min\":-330,\"timezone\":\"Asia/Calcutta\",\"conversation_mode\":{\"kind\":\"primary_assistant\"},\"enable_message_followups\":true,\"system_hints\":[],\"supports_buffering\":true,\"supported_encodings\":[\"v1\"],\"client_contextual_info\":{\"is_dark_mode\":false,\"time_since_loaded\":62,\"page_height\":1064,\"page_width\":949,\"pixel_ratio\":2,\"screen_height\":1117,\"screen_width\":1728,\"app_name\":\"chatgpt.com\"},\"paragen_cot_summary_display_override\":\"allow\",\"force_parallel_switch\":\"auto\"}"
+    }
+  },
+  {
+    "t": 7.351,
+    "kind": "tool_result",
+    "turn": 1,
+    "tool": "sample_body_slices",
+    "id": "toolu_015aSAxucjRVgJw9sN7w2Y1q",
+    "result": {
+      "i": 162,
+      "url": "https://chatgpt.com/backend-api/f/conversation",
+      "which": "response",
+      "total_bytes": 51368,
+      "complete": false,
+      "head": "event: delta_encoding\ndata: \"v1\"\n\ndata: {\"type\": \"resume_conversation_token\", \"kind\": \"topic\", \"token\": \"eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb25kdWl0X3V1aWQiOiJiMjk5NDBiNGIwNDY0Mzc2YWQzOWYwZWI0YjYzNDQyYiIsImNvbmR1aXRfbG9jYXRpb24iOiIxMC4xMjguMTE4LjE5MDo4MzA3IiwiY2x1c3RlciI6InVuaWZpZWQtOTciLCJpYXQiOjE3ODAxMjEzMzAsImV4cCI6MTc4MDEyODUzMCwidHVybl90b3BpY19pZCI6ImNvbnZlcnNhdGlvbi10dXJuLTdhMzVjNjViLTRkODItNGI0My1hOGE3LWRmMGQyOTQzMTAwOCJ9.Kt68N278Nbm_ACQqahRGB6xSvJj3yHE36FxQ_zyqVuCrQEmdPl0dDs6vznhhGsyXWJdZR249Y7BVBq9OL8ObUQ\", \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\"}\n\nevent: delta\ndata: {\"p\": \"\", \"o\": \"add\", \"v\": {\"message\": {\"id\": \"96264782-1cab-4f23-ab1f-1ec6b375a91c\", \"author\": {\"role\": \"system\", \"name\": null, \"metadata\": {}}, \"create_time\": null, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"\"]}, \"status\": \"finished_successfully\", \"end_turn\": true, \"weight\": 0.0, \"metadata\": {\"model_switcher_deny\": [], \"is_visually_hidden_from_conversation\": true}, \"recipient\": \"all\", \"channel\": null}, \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\", \"error\": null, \"error_code\": null}, \"c\": 0} \n\nevent: delta\ndata: {\"v\": {\"message\": {\"id\": \"42b06a24-aaf6-4765-96f9-b41d04ae1ba3\", \"author\": {\"role\": \"system\", \"name\": null, \"metadata\": {}}, \"create_time\": null, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"\"]}, \"status\": \"finished_successfully\", \"end_turn\": true, \"weight\": 0.0, \"metadata\": {\"rebase_developer_message\": true, \"m...[+500 chars]",
+      "head_offset": 0,
+      "middle": "_idx\": 9485, \"end_idx\": 9588, \"safe_urls\": [], \"refs\": [], \"alt\": null, \"prompt_text\": null, \"type\": \"hidden\", \"invalid\": true}, {\"matched_text\": \"\\ue200entity\\ue202[\\\"turnXproductY\\\",\\\"Display title\\\"]\\ue201\", \"prefix\": null, \"start_idx\": 14871, \"end_idx\": 14913, \"safe_urls\": [], \"refs\": [], \"alt\": \"Display title\", \"prompt_text\": \"Display title\", \"type\": \"entity\", \"name\": \"Display title\", \"category\": \"turnXproductY\", \"priority\": 1, \"metadata\": null, \"entity_data\": null, \"extra_params\": null, \"status\": \"done\", \"notes\": null, \"entity_index\": null, \"id\": \"Mza_HceKvlJ3yRRM\"}], \"story_events\": [], \"resolved_model_slug\": \"gpt-5-5\", \"request_id\": \"33392c3d-21b3-4373-98b6-6bde6d30382c\", \"message_type\": \"next\", \"turn_exchange_id\": \"7a35c65b-4d82-4b43-a8a7-df0d29431008\", \"model_slug\": \"gpt-5-5\", \"default_model_slug\": \"gpt-5-5\", \"parent_id\": \"3b2b17f3-c08d-441c-9bf9-60bbcb2cf4f1\", \"model_switcher_deny\": []}, \"recipient\": \"assistant\", \"channel\": null}, \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\", \"error\": null, \"error_code\": null}, \"c\": 6}  \n\ndata: {\"type\": \"message_marker\", \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\", \"message_id\": \"2565a8f6-46d9-42ee-b66f-e1f75bfe62cf\", \"marker\": \"search_start\", \"event\": \"first\"}\n\nevent: delta\ndata: {\"v\": {\"message\": {\"id\": \"2565a8f6-46d9-42ee-b66f-e1f75bfe62cf\", \"author\": {\"role\": \"assistant\", \"name\": null, \"metadata\": {}}, \"create_time\": 1780121330.6087508, \"update_time\": null, \"content\": {\"content_type\": \"code\", \"languag...[+500 chars]",
+      "middle_offset": 24684,
+      "tail": "a1a7ee8-7520-8322-9030-6f13aefbd67f\"}\n\ndata: {\"type\": \"server_ste_metadata\", \"metadata\": {\"conduit_prewarmed\": true, \"plan_type\": \"go\", \"plan_type_bucket\": \"paid\", \"user_agent\": \"web_desktop\", \"service\": null, \"tool_name\": \"SonicBrowserTool\", \"tool_invoked\": true, \"fast_convo\": true, \"warmup_state\": \"warm\", \"is_first_turn\": true, \"cluster_region\": \"centralindia\", \"model_slug\": \"gpt-5-5\", \"region\": null, \"is_multimodal\": null, \"did_auto_switch_to_reasoning\": false, \"auto_switcher_race_winner\": null, \"is_autoswitcher_enabled\": false, \"is_search\": null, \"did_prompt_contain_image\": false, \"search_tool_call_count\": null, \"search_tool_query_types\": null, \"message_id\": \"c12577c8-4d46-4701-be22-503db6f4c275\", \"request_id\": \"33392c3d-21b3-4373-98b6-6bde6d30382c\", \"turn_exchange_id\": \"7a35c65b-4d82-4b43-a8a7-df0d29431008\", \"turn_trace_id\": \"21464400-a173-4ff6-b577-d10e9d4e2bee\", \"a32e6ebcb\": 7, \"resume_with_websockets\": true, \"low_turn_topic_ttl\": false, \"streaming_async_status\": false, \"replace_stream_status\": true, \"temporal_conversation_turn\": false, \"pro_mode_turn_topic_streaming\": true, \"turn_use_case\": \"instant search\", \"turn_mode\": \"default\"}, \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\"}\n\ndata: {\"type\": \"message_stream_complete\", \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\"}\n\ndata: {\"type\": \"conversation_detail_metadata\", \"banner_info\": null, \"blocked_features\": [], \"model_limits\": [], \"limits_progress\": [{\"feature_name\": \"deep_research\", \"remaining\": ...[+500 chars]",
+      "tail_offset": 49368
+    }
+  },
+  {
+    "t": 7.352,
+    "kind": "model_request",
+    "turn": 2,
+    "messages_count": 5
+  },
+  {
+    "t": 13.339,
+    "kind": "model_response",
+    "turn": 2,
+    "stop_reason": "tool_use",
+    "input_tokens": 1,
+    "output_tokens": 127,
+    "cache_read_input_tokens": 12792,
+    "cache_creation_input_tokens": 4867
+  },
+  {
+    "t": 13.341,
+    "kind": "model_thinking",
+    "turn": 2,
+    "text": " I'm decoding the stream to understand its structure better."
+  },
+  {
+    "t": 13.342,
+    "kind": "tool_call",
+    "turn": 2,
+    "tool": "decode_stream",
+    "input": {
+      "index": 162,
+      "max_chunks_sample": 3
+    },
+    "id": "toolu_01RXnE9Sh6fYjmV4UtP7t2kb"
+  },
+  {
+    "t": 13.345,
+    "kind": "tool_result",
+    "turn": 2,
+    "tool": "decode_stream",
+    "id": "toolu_01RXnE9Sh6fYjmV4UtP7t2kb",
+    "result": {
+      "i": 162,
+      "url": "https://chatgpt.com/backend-api/f/conversation",
+      "mime": "text/event-stream",
+      "format": "sse",
+      "event_count": 39,
+      "sample_events": [
+        {
+          "event": "delta_encoding",
+          "data": "v1"
+        },
+        {
+          "event": null,
+          "data": {
+            "type": "resume_conversation_token",
+            "kind": "topic",
+            "token": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb25kdWl0X3V1aWQiOiJiMjk5NDBiNGIwNDY0Mzc2YWQzOWYwZWI0YjYzNDQyYiIsImNvbmR1aXRfbG9jYXRpb24iOiIxMC4xMjguMTE4LjE5MDo4MzA3IiwiY2x1c3RlciI6InVuaWZpZWQtOTciLCJpYXQiOjE3ODAxMjEzMzAsImV4cCI6MTc4MDEyODUzMCwidHVybl90b3BpY19pZCI6ImNvbnZlcnNhdGlvbi10dXJuLTdhMzVjNjViLTRkODItNGI0My1hOGE3LWRmMGQyOTQzMTAwOCJ9.Kt68N278Nbm_ACQqahRGB6xSvJj3yHE36FxQ_zyqVuCrQEmdPl0dDs6vznhhGsyXWJdZR249Y7BVBq9OL8ObUQ",
+            "conversation_id": "6a1a7ee8-7520-8322-9030-6f13aefbd67f"
+          }
+        },
+        {
+          "event": "delta",
+          "data": {
+            "p": "",
+            "o": "add",
+            "v": {
+              "message": {
+                "id": "96264782-1cab-4f23-ab1f-1ec6b375a91c",
+                "author": {
+                  "role": "system",
+                  "name": null,
+                  "metadata": {}
+                },
+                "create_time": null,
+                "update_time": null,
+                "content": {
+                  "content_type": "text",
+                  "parts": [
+                    ""
+                  ]
+                },
+                "status": "finished_successfully",
+                "end_turn": true,
+                "weight": 0.0,
+                "metadata": {
+                  "model_switcher_deny": [],
+                  "is_visually_hidden_from_conversation": true
+                },
+                "recipient": "all",
+                "channel": null
+              },
+              "conversation_id": "6a1a7ee8-7520-8322-9030-6f13aefbd67f",
+              "error": null,
+              "error_code": null
+            },
+            "c": 0
+          }
+        }
+      ],
+      "json_key_paths_seen": [
+        "<raw_string>",
+        "conversation_id",
+        "default_model_slug",
+        "event",
+        "input_message.author.metadata.real_author",
+        "input_message.author.role",
+        "input_message.content.content_type",
+        "input_message.content.instructions[]",
+        "input_message.content.parts[]",
+        "input_message.id",
+        "input_message.metadata.genui_prefetch.always_trigger_tool_names[]",
+        "input_message.metadata.genui_prefetch.tool_names[]",
+        "input_message.metadata.paragen_stream_type",
+        "input_message.metadata.parent_id",
+        "input_message.metadata.request_id",
+        "input_message.metadata.resolved_model_slug",
+        "input_message.metadata.turn_exchange_id",
+        "input_message.metadata.turn_trace_id",
+        "input_message.metadata.useragent.client_type",
+        "input_message.metadata.useragent.user_agent"
+      ],
+      "reconstructed_text_preview": "Here are some prefetched results from `genui_search` command inside of `web.run` tool:\n<genui_search_tool_results>\n  <direct_mode>\n    <direct_mode_strategy>\n      For the following Direct Mode widgets, you MUST NOT use the `genui_run` command inside of `web.run` tool. Instead run directly in the final response at the location you want to insert the widget. Run using a `genui` content reference. This MUST be of the form: \ue200genui\ue202{\"<widget name>\": {<args>}}\ue201\n    </direct_mode_strategy>\n    <direct_mode_tools>\n      <tool name=\"image_grid\">\n      // ### Description:\n      // Render a dense, clickable image-search results grid when the user's sole intent is to see image results, photos, pictures, or pics for a specific visual query. This includes a clear visual refinement or pivot after a prior ImageGrid turn even when the latest user turn omits words like images or photos. Resolve pronouns from conversation context, carry forward the prior visual subject, and reuse ImageGrid for refinements such as User: Images of Ronaldo; Assistant: <Text>Ronaldo images:</Text><ImageGrid ... />; User: I'm thinking about his header; Assistant: <Text>Ronaldo header moments:</Text><ImageGrid ... />. Als...[+7970 chars]",
+      "reconstructed_text_length": 9170
+    }
+  },
+  {
+    "t": 13.347,
+    "kind": "model_request",
+    "turn": 3,
+    "messages_count": 7
+  },
+  {
+    "t": 20.766,
+    "kind": "model_response",
+    "turn": 3,
+    "stop_reason": "tool_use",
+    "input_tokens": 1,
+    "output_tokens": 351,
+    "cache_read_input_tokens": 17659,
+    "cache_creation_input_tokens": 3027
+  },
+  {
+    "t": 20.768,
+    "kind": "model_thinking",
+    "turn": 3,
+    "text": " I need to look more carefully at the message structure \u2014 the actual assistant text is nested in `v.message.content.parts[]` for messages where the author is \"assistant\" and the content type is \"text\". The streaming format uses delta encoding with path, operation, and value fields, so I need to trace through those deltas to find where the assistant's actual output is located."
+  },
+  {
+    "t": 20.77,
+    "kind": "tool_call",
+    "turn": 3,
+    "tool": "search_bodies",
+    "input": {
+      "query": "\"role\": \"assistant\"",
+      "where": "response",
+      "max_hits": 10
+    },
+    "id": "toolu_01D4SoFgYKoGeoXpJ86CfeAQ"
+  },
+  {
+    "t": 20.773,
+    "kind": "tool_call",
+    "turn": 3,
+    "tool": "sample_body_slices",
+    "input": {
+      "index": 162,
+      "slice_bytes": 3000
+    },
+    "id": "toolu_01W1UpVmHskeF2JXaRPhMWtT"
+  },
+  {
+    "t": 20.783,
+    "kind": "tool_result",
+    "turn": 3,
+    "tool": "search_bodies",
+    "id": "toolu_01D4SoFgYKoGeoXpJ86CfeAQ",
+    "result": {
+      "hits": [
+        {
+          "i": 162,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 18103,
+          "mime": "text/event-stream",
+          "snippet": "f\"}\n\nevent: delta\ndata: {\"v\": {\"message\": {\"id\": \"3b2b17f3-c08d-441c-9bf9-60bbcb2cf4f1\", \"author\": {\"role\": \"assistant\", \"name\": null, \"metadata\": {}}, \"create_time\": 1780121330.7093093, \"update_time\": null, \"content\": "
+        },
+        {
+          "i": 205,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 2842,
+          "mime": "text/event-stream",
+          "snippet": "a: {\"p\": \"\", \"o\": \"add\", \"v\": {\"message\": {\"id\": \"506f490b-bfbc-41f0-8825-12c68c36ac5e\", \"author\": {\"role\": \"assistant\", \"name\": null, \"metadata\": {}}, \"create_time\": 1780121360.480684, \"update_time\": null, \"content\": {"
+        },
+        {
+          "i": 226,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 2834,
+          "mime": "text/event-stream",
+          "snippet": "a: {\"p\": \"\", \"o\": \"add\", \"v\": {\"message\": {\"id\": \"4ef00d68-5519-4707-9cc2-d163968c45a7\", \"author\": {\"role\": \"assistant\", \"name\": null, \"metadata\": {}}, \"create_time\": 1780121387.862666, \"update_time\": null, \"content\": {"
+        }
+      ],
+      "truncated": false
+    }
+  },
+  {
+    "t": 20.784,
+    "kind": "tool_result",
+    "turn": 3,
+    "tool": "sample_body_slices",
+    "id": "toolu_01W1UpVmHskeF2JXaRPhMWtT",
+    "result": {
+      "i": 162,
+      "url": "https://chatgpt.com/backend-api/f/conversation",
+      "which": "response",
+      "total_bytes": 51368,
+      "complete": false,
+      "head": "event: delta_encoding\ndata: \"v1\"\n\ndata: {\"type\": \"resume_conversation_token\", \"kind\": \"topic\", \"token\": \"eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb25kdWl0X3V1aWQiOiJiMjk5NDBiNGIwNDY0Mzc2YWQzOWYwZWI0YjYzNDQyYiIsImNvbmR1aXRfbG9jYXRpb24iOiIxMC4xMjguMTE4LjE5MDo4MzA3IiwiY2x1c3RlciI6InVuaWZpZWQtOTciLCJpYXQiOjE3ODAxMjEzMzAsImV4cCI6MTc4MDEyODUzMCwidHVybl90b3BpY19pZCI6ImNvbnZlcnNhdGlvbi10dXJuLTdhMzVjNjViLTRkODItNGI0My1hOGE3LWRmMGQyOTQzMTAwOCJ9.Kt68N278Nbm_ACQqahRGB6xSvJj3yHE36FxQ_zyqVuCrQEmdPl0dDs6vznhhGsyXWJdZR249Y7BVBq9OL8ObUQ\", \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\"}\n\nevent: delta\ndata: {\"p\": \"\", \"o\": \"add\", \"v\": {\"message\": {\"id\": \"96264782-1cab-4f23-ab1f-1ec6b375a91c\", \"author\": {\"role\": \"system\", \"name\": null, \"metadata\": {}}, \"create_time\": null, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"\"]}, \"status\": \"finished_successfully\", \"end_turn\": true, \"weight\": 0.0, \"metadata\": {\"model_switcher_deny\": [], \"is_visually_hidden_from_conversation\": true}, \"recipient\": \"all\", \"channel\": null}, \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\", \"error\": null, \"error_code\": null}, \"c\": 0} \n\nevent: delta\ndata: {\"v\": {\"message\": {\"id\": \"42b06a24-aaf6-4765-96f9-b41d04ae1ba3\", \"author\": {\"role\": \"system\", \"name\": null, \"metadata\": {}}, \"create_time\": null, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"\"]}, \"status\": \"finished_successfully\", \"end_turn\": true, \"weight\": 0.0, \"metadata\": {\"rebase_developer_message\": true, \"m...[+1500 chars]",
+      "head_offset": 0,
+      "middle": "d_idx\": 8890, \"safe_urls\": [], \"refs\": [], \"alt\": \"Product E\", \"prompt_text\": \"Product E\", \"type\": \"entity\", \"name\": \"Product E\", \"category\": \"<PRODUCT_REF_5_FROM_TOOL>\", \"priority\": 1, \"metadata\": null, \"entity_data\": null, \"extra_params\": null, \"status\": \"done\", \"notes\": null, \"entity_index\": null, \"id\": \"kYnxUNgMW4J82VMi\"}, {\"matched_text\": \"\\ue200explore_more\\ue202{\\\"selections\\\":[[\\\"turn0product1\\\",\\\"Product Title\\\"],[\\\"turn0product2\\\",\\\"Product Title\\\"],...]}\\ue201\", \"prefix\": null, \"start_idx\": 9485, \"end_idx\": 9588, \"safe_urls\": [], \"refs\": [], \"alt\": null, \"prompt_text\": null, \"type\": \"hidden\", \"invalid\": true}, {\"matched_text\": \"\\ue200entity\\ue202[\\\"turnXproductY\\\",\\\"Display title\\\"]\\ue201\", \"prefix\": null, \"start_idx\": 14871, \"end_idx\": 14913, \"safe_urls\": [], \"refs\": [], \"alt\": \"Display title\", \"prompt_text\": \"Display title\", \"type\": \"entity\", \"name\": \"Display title\", \"category\": \"turnXproductY\", \"priority\": 1, \"metadata\": null, \"entity_data\": null, \"extra_params\": null, \"status\": \"done\", \"notes\": null, \"entity_index\": null, \"id\": \"Mza_HceKvlJ3yRRM\"}], \"story_events\": [], \"resolved_model_slug\": \"gpt-5-5\", \"request_id\": \"33392c3d-21b3-4373-98b6-6bde6d30382c\", \"message_type\": \"next\", \"turn_exchange_id\": \"7a35c65b-4d82-4b43-a8a7-df0d29431008\", \"model_slug\": \"gpt-5-5\", \"default_model_slug\": \"gpt-5-5\", \"parent_id\": \"3b2b17f3-c08d-441c-9bf9-60bbcb2cf4f1\", \"model_switcher_deny\": []}, \"recipient\": \"assistant\", \"channel\": null}, \"conversation_id\": \"6a1a7ee8-7520-8322-9030-...[+1500 chars]",
+      "middle_offset": 24184,
+      "tail": "\"}]}, {\"type\": \"search_result_group\", \"domain\": \"india.gov.in\", \"entries\": [{\"type\": \"search_result\", \"url\": \"https://knowindia.india.gov.in/general-information/prime-ministers-of-india.php?utm_source=chatgpt.com\", \"title\": \"General Information - Prime Ministers Of India\", \"snippet\": \"Prime Ministers of India. Name, Tenure. Narendra Modi (B-1950), May 26, 2014 - Incumbent. Dr. Manmohan Singh (B-1932), May 22, 2004 - May 26, 2014 \\u00b7 President of ...Read more\", \"ref_id\": {\"turn_index\": 0, \"ref_type\": \"search\", \"ref_index\": 13}, \"pub_date\": null, \"result_source\": \"bright\", \"attribution\": \"india.gov.in\"}]}], \"is_complete\": true, \"can_save\": true, \"finish_details\": {\"type\": \"stop\", \"stop_tokens\": [200002]}}}]}      \n\ndata: {\"type\": \"message_marker\", \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\", \"message_id\": \"ea9e947b-1488-41c3-bf5a-8f4a1130aa53\", \"marker\": \"last_token\", \"event\": \"last\"}\n\ndata: {\"type\": \"title_generation\", \"title\": \"First PM of India\", \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\"}\n\ndata: {\"type\": \"server_ste_metadata\", \"metadata\": {\"conduit_prewarmed\": true, \"plan_type\": \"go\", \"plan_type_bucket\": \"paid\", \"user_agent\": \"web_desktop\", \"service\": null, \"tool_name\": \"SonicBrowserTool\", \"tool_invoked\": true, \"fast_convo\": true, \"warmup_state\": \"warm\", \"is_first_turn\": true, \"cluster_region\": \"centralindia\", \"model_slug\": \"gpt-5-5\", \"region\": null, \"is_multimodal\": null, \"did_auto_switch_to_reasoning\": false, \"auto_switcher_race_winner\": nu...[+1500 chars]",
+      "tail_offset": 48368
+    }
+  },
+  {
+    "t": 20.785,
+    "kind": "model_request",
+    "turn": 4,
+    "messages_count": 9
+  },
+  {
+    "t": 28.331,
+    "kind": "model_response",
+    "turn": 4,
+    "stop_reason": "tool_use",
+    "input_tokens": 1,
+    "output_tokens": 442,
+    "cache_read_input_tokens": 20686,
+    "cache_creation_input_tokens": 6374
+  },
+  {
+    "t": 28.333,
+    "kind": "model_thinking",
+    "turn": 4,
+    "text": " I'm looking at the structure of the streaming response\u2014it's using OpenAI's delta encoding format with system messages, user context, a web search call from the assistant, tool results, and finally the assistant's text response that contains the actual answer. The text message comes through as SSE deltas with an initial add operation followed by chunks that append to build up the full response.\n\nNow I need to find where the assistant text deltas are in the stream."
+  },
+  {
+    "t": 28.334,
+    "kind": "tool_call",
+    "turn": 4,
+    "tool": "search_bodies",
+    "input": {
+      "query": "\"recipient\": \"all\"",
+      "where": "response",
+      "max_hits": 5
+    },
+    "id": "toolu_01DrdV8Yeo5QndY8HNssFNZ7"
+  },
+  {
+    "t": 28.335,
+    "kind": "tool_call",
+    "turn": 4,
+    "tool": "search_bodies",
+    "input": {
+      "query": "\"content_type\": \"text\"",
+      "where": "response",
+      "max_hits": 10
+    },
+    "id": "toolu_011RpW7BWjHodZLAdX7EasDL"
+  },
+  {
+    "t": 28.338,
+    "kind": "tool_result",
+    "turn": 4,
+    "tool": "search_bodies",
+    "id": "toolu_01DrdV8Yeo5QndY8HNssFNZ7",
+    "result": {
+      "hits": [
+        {
+          "i": 162,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 1002,
+          "mime": "text/event-stream",
+          "snippet": "eight\": 0.0, \"metadata\": {\"model_switcher_deny\": [], \"is_visually_hidden_from_conversation\": true}, \"recipient\": \"all\", \"channel\": null}, \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\", \"error\": null, \"error"
+        },
+        {
+          "i": 205,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 2628,
+          "mime": "text/event-stream",
+          "snippet": " \"default\", \"resolved_model_slug\": \"gpt-5-5\", \"parent_id\": \"ea9e947b-1488-41c3-bf5a-8f4a1130aa53\"}, \"recipient\": \"all\", \"channel\": null}, \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\"}\n\nevent: delta\ndata: {"
+        },
+        {
+          "i": 226,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 2620,
+          "mime": "text/event-stream",
+          "snippet": " \"default\", \"resolved_model_slug\": \"gpt-5-5\", \"parent_id\": \"506f490b-bfbc-41f0-8825-12c68c36ac5e\"}, \"recipient\": \"all\", \"channel\": null}, \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\"}\n\nevent: delta\ndata: {"
+        }
+      ],
+      "truncated": false
+    }
+  },
+  {
+    "t": 28.341,
+    "kind": "tool_result",
+    "turn": 4,
+    "tool": "search_bodies",
+    "id": "toolu_011RpW7BWjHodZLAdX7EasDL",
+    "result": {
+      "hits": [
+        {
+          "i": 162,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 807,
+          "mime": "text/event-stream",
+          "snippet": "le\": \"system\", \"name\": null, \"metadata\": {}}, \"create_time\": null, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"\"]}, \"status\": \"finished_successfully\", \"end_turn\": true, \"weight\": 0.0, \"metadata\": {\""
+        },
+        {
+          "i": 205,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 806,
+          "mime": "text/event-stream",
+          "snippet": "er\", \"name\": null, \"metadata\": {}}, \"create_time\": 1780121359.699, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"then can I know the first woman prime minister of india?\"]}, \"status\": \"finished_succes"
+        },
+        {
+          "i": 226,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 805,
+          "mime": "text/event-stream",
+          "snippet": "ser\", \"name\": null, \"metadata\": {}}, \"create_time\": 1780121386.99, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"got it, then who is the first president of India?\"]}, \"status\": \"finished_successfully\""
+        }
+      ],
+      "truncated": false
+    }
+  },
+  {
+    "t": 28.342,
+    "kind": "model_request",
+    "turn": 5,
+    "messages_count": 11
+  },
+  {
+    "t": 36.189,
+    "kind": "model_response",
+    "turn": 5,
+    "stop_reason": "tool_use",
+    "input_tokens": 1,
+    "output_tokens": 511,
+    "cache_read_input_tokens": 27060,
+    "cache_creation_input_tokens": 1678
+  },
+  {
+    "t": 36.192,
+    "kind": "model_thinking",
+    "turn": 5,
+    "text": " I'm looking at the structure of these conversation entries and how the messages are encoded. Each one has a user message stored in the request body under `messages[].content.parts[]`, and the assistant's response uses delta operations to build up the text. I need to find the assistant message with `recipient=\"all\"` and `content_type=\"text\"`, then reconstruct it by following the add and append operations to get the full content."
+  },
+  {
+    "t": 36.193,
+    "kind": "tool_call",
+    "turn": 5,
+    "tool": "search_bodies",
+    "input": {
+      "query": "\"append\"",
+      "where": "response",
+      "max_hits": 5
+    },
+    "id": "toolu_01FoX2oyFLTGZiX99wZYn46L"
+  },
+  {
+    "t": 36.193,
+    "kind": "tool_call",
+    "turn": 5,
+    "tool": "search_bodies",
+    "input": {
+      "query": "/message/content/parts/0",
+      "where": "response",
+      "max_hits": 5
+    },
+    "id": "toolu_019ebv9Jcj3jHaFyVPK6tX1g"
+  },
+  {
+    "t": 36.201,
+    "kind": "tool_result",
+    "turn": 5,
+    "tool": "search_bodies",
+    "id": "toolu_01FoX2oyFLTGZiX99wZYn46L",
+    "result": {
+      "hits": [
+        {
+          "i": 162,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 29251,
+          "mime": "text/event-stream",
+          "snippet": ", \"event\": \"first\"}\n\nevent: delta\ndata: {\"o\": \"patch\", \"v\": [{\"p\": \"/message/content/parts/0\", \"o\": \"append\", \"v\": \"The first Prime Minister of India was\"}, {\"p\": \"/message/metadata/safe_urls\", \"o\": \"add\", \"v"
+        },
+        {
+          "i": 205,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 4048,
+          "mime": "text/event-stream",
+          "snippet": "\"final_channel_token\", \"event\": \"first\"}\n\nevent: delta\ndata: {\"p\": \"/message/content/parts/0\", \"o\": \"append\", \"v\": \"The first woman\"}\n\nevent: delta\ndata: {\"v\": \" Prime Minister of India was\"}   \n\nevent: delta"
+        },
+        {
+          "i": 226,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 4040,
+          "mime": "text/event-stream",
+          "snippet": "\"final_channel_token\", \"event\": \"first\"}\n\nevent: delta\ndata: {\"p\": \"/message/content/parts/0\", \"o\": \"append\", \"v\": \"The first President\"}    \n\nevent: delta\ndata: {\"p\": \"\", \"o\": \"patch\", \"v\": [{\"p\": \"/message/"
+        }
+      ],
+      "truncated": false
+    }
+  },
+  {
+    "t": 36.205,
+    "kind": "tool_result",
+    "turn": 5,
+    "tool": "search_bodies",
+    "id": "toolu_019ebv9Jcj3jHaFyVPK6tX1g",
+    "result": {
+      "hits": [
+        {
+          "i": 162,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 29219,
+          "mime": "text/event-stream",
+          "snippet": " \"marker\": \"final_channel_token\", \"event\": \"first\"}\n\nevent: delta\ndata: {\"o\": \"patch\", \"v\": [{\"p\": \"/message/content/parts/0\", \"o\": \"append\", \"v\": \"The first Prime Minister of India was\"}, {\"p\": \"/message/metadata/safe_urls\""
+        },
+        {
+          "i": 205,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 4016,
+          "mime": "text/event-stream",
+          "snippet": "0-8825-12c68c36ac5e\", \"marker\": \"final_channel_token\", \"event\": \"first\"}\n\nevent: delta\ndata: {\"p\": \"/message/content/parts/0\", \"o\": \"append\", \"v\": \"The first woman\"}\n\nevent: delta\ndata: {\"v\": \" Prime Minister of India was\"} "
+        },
+        {
+          "i": 226,
+          "url": "https://chatgpt.com/backend-api/f/conversation",
+          "where": "response",
+          "offset": 4008,
+          "mime": "text/event-stream",
+          "snippet": "7-9cc2-d163968c45a7\", \"marker\": \"final_channel_token\", \"event\": \"first\"}\n\nevent: delta\ndata: {\"p\": \"/message/content/parts/0\", \"o\": \"append\", \"v\": \"The first President\"}    \n\nevent: delta\ndata: {\"p\": \"\", \"o\": \"patch\", \"v\": ["
+        }
+      ],
+      "truncated": false
+    }
+  },
+  {
+    "t": 36.206,
+    "kind": "model_request",
+    "turn": 6,
+    "messages_count": 13
+  },
+  {
+    "t": 68.18,
+    "kind": "model_response",
+    "turn": 6,
+    "stop_reason": "tool_use",
+    "input_tokens": 1,
+    "output_tokens": 2162,
+    "cache_read_input_tokens": 28738,
+    "cache_creation_input_tokens": 1794
+  },
+  {
+    "t": 68.183,
+    "kind": "model_thinking",
+    "turn": 6,
+    "text": " I'm mapping out how to parse the conversation structure\u2014each user message lives in the request body at a specific path, and the assistant's response comes through as a stream of deltas that I need to concatenate together, using the `final_channel_token` marker to identify where the complete response ends. I'm realizing the simplest approach is to track the message stream by looking for the `final_channel_token` marker, then collecting all subsequent text appends to `/message/content/parts/0` until the stream ends\u2014that's the assistant's final response. Now I'm figuring out the timestamps\u2014I'll use the HAR entry's `startedDateTime` for the user turn and pull the assistant message's `create_time` if available, otherwise fall back to the entry's start time plus duration. Let me start building the extractor."
+  },
+  {
+    "t": 68.184,
+    "kind": "tool_call",
+    "turn": 6,
+    "tool": "inspect_entry",
+    "input": {
+      "index": 205,
+      "body": "request",
+      "max_bytes": 2000
+    },
+    "id": "toolu_01Bn1WoPJZrqTGLKdJHh7S7L"
+  },
+  {
+    "t": 68.185,
+    "kind": "tool_call",
+    "turn": 6,
+    "tool": "sample_body_slices",
+    "input": {
+      "index": 205,
+      "slice_bytes": 2500
+    },
+    "id": "toolu_01CartAECGMeLKbFPw8MQuRv"
+  },
+  {
+    "t": 68.187,
+    "kind": "tool_result",
+    "turn": 6,
+    "tool": "inspect_entry",
+    "id": "toolu_01Bn1WoPJZrqTGLKdJHh7S7L",
+    "result": {
+      "i": 205,
+      "method": "POST",
+      "url": "https://chatgpt.com/backend-api/f/conversation",
+      "status": 200,
+      "mime": "text/event-stream",
+      "started_at": "2026-05-30T06:09:19.722Z",
+      "request_headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "accept",
+          "value": "text/event-stream"
+        }
+      ],
+      "response_headers": [
+        {
+          "name": "Content-Type",
+          "value": "text/event-stream; charset=utf-8"
+        },
+        {
+          "name": "Transfer-Encoding",
+          "value": "chunked"
+        }
+      ],
+      "req_bytes": 1003,
+      "resp_bytes": 28693,
+      "request_body": "{\"action\":\"next\",\"messages\":[{\"id\":\"17b0bca3-2614-490e-90e2-33616bc00a6c\",\"author\":{\"role\":\"user\"},\"create_time\":1780121359.699,\"content\":{\"content_type\":\"text\",\"parts\":[\"then can I know the first woman prime minister of india?\"]},\"metadata\":{\"selected_github_repos\":[],\"selected_all_github_repos\":false,\"serialization_metadata\":{\"custom_symbol_offsets\":[]}}}],\"conversation_id\":\"6a1a7ee8-7520-8322-9030-6f13aefbd67f\",\"parent_message_id\":\"ea9e947b-1488-41c3-bf5a-8f4a1130aa53\",\"model\":\"gpt-5-5\",\"client_prepare_state\":\"success\",\"timezone_offset_min\":-330,\"timezone\":\"Asia/Calcutta\",\"conversation_mode\":{\"kind\":\"primary_assistant\"},\"enable_message_followups\":true,\"system_hints\":[],\"supports_buffering\":true,\"supported_encodings\":[\"v1\"],\"client_contextual_info\":{\"is_dark_mode\":false,\"time_since_loaded\":93,\"page_height\":1064,\"page_width\":949,\"pixel_ratio\":2,\"screen_height\":1117,\"screen_width\":1728,\"app_name\":\"chatgpt.com\"},\"paragen_cot_summary_display_override\":\"allow\",\"force_parallel_switch\":\"auto\"}"
+    }
+  },
+  {
+    "t": 68.189,
+    "kind": "tool_result",
+    "turn": 6,
+    "tool": "sample_body_slices",
+    "id": "toolu_01CartAECGMeLKbFPw8MQuRv",
+    "result": {
+      "i": 205,
+      "url": "https://chatgpt.com/backend-api/f/conversation",
+      "which": "response",
+      "total_bytes": 28693,
+      "complete": false,
+      "head": "event: delta_encoding\ndata: \"v1\"\n\ndata: {\"type\": \"resume_conversation_token\", \"kind\": \"topic\", \"token\": \"eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb25kdWl0X3V1aWQiOiJkYmRmMTBiOGM1ZjA0M2JhOTBiYmFiOGQzYjMwNWYwYiIsImNvbmR1aXRfbG9jYXRpb24iOiIxMC4xMjguMTE4LjE5MDo4MzA3IiwiY2x1c3RlciI6InVuaWZpZWQtOTciLCJpYXQiOjE3ODAxMjEzNjEsImV4cCI6MTc4MDEyODU2MSwidHVybl90b3BpY19pZCI6ImNvbnZlcnNhdGlvbi10dXJuLWQ2ZDBhODgzLTU2MzctNDRkMS05OTFiLWEwMTIzMzIzM2E3MiJ9.pZhwlEoMfZlYvsTiKcKjXWdR2I1jKLCY8bGwDLJOac50-OAV_Fz9RhTTMNj1Y7NFftUZWYkl4BTXVHIkYZNrHw\", \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\"}\n\ndata: {\"type\": \"input_message\", \"input_message\": {\"id\": \"17b0bca3-2614-490e-90e2-33616bc00a6c\", \"author\": {\"role\": \"user\", \"name\": null, \"metadata\": {}}, \"create_time\": 1780121359.699, \"update_time\": null, \"content\": {\"content_type\": \"text\", \"parts\": [\"then can I know the first woman prime minister of india?\"]}, \"status\": \"finished_successfully\", \"end_turn\": null, \"weight\": 1.0, \"metadata\": {\"selected_github_repos\": [], \"selected_all_github_repos\": false, \"serialization_metadata\": {\"custom_symbol_offsets\": []}, \"request_id\": \"6683a5ca-305b-4e72-aebf-7ce84ce44c3f\", \"message_source\": null, \"turn_exchange_id\": \"d6d0a883-5637-44d1-991b-a01233233a72\", \"turn_trace_id\": \"b04539b4-349b-4d6b-96cf-be578039cdde\", \"useragent\": {\"client_type\": \"web\", \"is_mobile\": false, \"is_mobile_app\": false, \"is_desktop_app\": false, \"is_native_app\": false, \"is_native_app_apple\": false, \"is_mobile_app_ios\": false, \"is_desktop_a...[+1000 chars]",
+      "head_offset": 0,
+      "middle": "pend\", \"v\": \"\\n\\nShe remains one of the most influential and debated political figures\"}, {\"p\": \"/message/metadata/content_references/5/alt\", \"o\": \"replace\", \"v\": \"\\n\\n\\n\\n\\n\\n\"}, {\"p\": \"/message/metadata/content_references/5/type\", \"o\": \"replace\", \"v\": \"image_group\"}, {\"p\": \"/message/metadata/content_references/5/invalid\", \"o\": \"replace\", \"v\": false}, {\"p\": \"/message/metadata/content_references/5\", \"o\": \"append\", \"v\": {\"images\": [{\"image_result\": null, \"image_ref_id\": null, \"image_search_query\": \"Indira Gandhi portrait\", \"image_search_system\": null}, {\"image_result\": null, \"image_ref_id\": null, \"image_search_query\": \"Indira Gandhi speaking at rally\", \"image_search_system\": null}, {\"image_result\": null, \"image_ref_id\": null, \"image_search_query\": \"Indira Gandhi official photograph\", \"image_search_system\": null}, {\"image_result\": null, \"image_ref_id\": null, \"image_search_query\": \"Indira Gandhi with world leaders\", \"image_search_system\": null}], \"aspect_ratio\": \"1:1\", \"layout\": \"carousel\", \"blender_debug_info\": null}}]}      \n\nevent: delta\ndata: {\"v\": [{\"p\": \"/message/content/parts/0\", \"o\": \"append\", \"v\": \" in Indian history.\"}, {\"p\": \"/message/status\", \"o\": \"replace\", \"v\": \"finished_successfully\"}, {\"p\": \"/message/end_turn\", \"o\": \"replace\", \"v\": true}, {\"p\": \"/message/metadata/content_references/5/safe_urls\", \"o\": \"append\", \"v\": [\"https://images.openai.com/static-rsc-4/0Yy3FpSVulIklQbYzyaRD4seoOJ9bl9WYlO9utpg7yOhz841iQ7MrXWXZXSOvbyY4l-dlVTP0QJL4UQroI9pnKDkp5XnTKOGlBDGbQHtKRt02...[+1000 chars]",
+      "middle_offset": 13096,
+      "tail": "ImDqTQR4CDh8ubIQaxF2p-Go3MhjfXbfTlEdRlbAw74?purpose=fullsize\", \"https://images.openai.com/static-rsc-4/xlA8yOGgpf-SOkkuO3NzaCuG57MNt4y51rPwmy7Ugs5iTjJTSro-mYgg_WefMljOlMyp0h-vjdzcs8uTPBMVdh3GCtRu6n0gL-muoeWdlLqD2lZV7NHDo47wqLL7cbW_JqV6QIzd3EjU0nwGQBtUPfpKeO_2iAz8MZA3UNVhNK45wjCsf5x740WEJqc2xAOD?purpose=fullsize\"], \"can_save\": true, \"search_result_groups\": []}}]}       \n\ndata: {\"type\": \"message_marker\", \"conversation_id\": \"6a1a7ee8-7520-8322-9030-6f13aefbd67f\", \"message_id\": \"506f490b-bfbc-41f0-8825-12c68c36ac5e\", \"marker\": \"last_token\", \"event\": \"last\"}\n\ndata: {\"type\": \"server_ste_metadata\", \"metadata\": {\"conduit_prewarmed\": true, \"plan_type\": \"go\", \"plan_type_bucket\": \"paid\", \"user_agent\": \"web_desktop\", \"service\": null, \"tool_name\": null, \"tool_invoked\": false, \"fast_convo\": true, \"warmup_state\": \"warm\", \"is_first_turn\": false, \"cluster_region\": \"centralindia\", \"model_slug\": \"gpt-5-5\", \"region\": null, \"is_multimodal\": null, \"did_auto_switch_to_reasoning\": false, \"auto_switcher_race_winner\": null, \"is_autoswitcher_enabled\": false, \"is_search\": null, \"did_prompt_contain_image\": false, \"search_tool_call_count\": null, \"search_tool_query_types\": null, \"message_id\": \"506f490b-bfbc-41f0-8825-12c68c36ac5e\", \"request_id\": \"6683a5ca-305b-4e72-aebf-7ce84ce44c3f\", \"turn_exchange_id\": \"d6d0a883-5637-44d1-991b-a01233233a72\", \"turn_trace_id\": \"b04539b4-349b-4d6b-96cf-be578039cdde\", \"a32e6ebcb\": 2, \"resume_with_websockets\": true, \"low_turn_topic_ttl\": false, \"streaming_async_status\": false...[+1000 chars]",
+      "tail_offset": 26193
+    }
+  },
+  {
+    "t": 68.191,
+    "kind": "model_request",
+    "turn": 7,
+    "messages_count": 15
+  },
+  {
+    "t": 153.994,
+    "kind": "model_response",
+    "turn": 7,
+    "stop_reason": "tool_use",
+    "input_tokens": 1,
+    "output_tokens": 7922,
+    "cache_read_input_tokens": 30532,
+    "cache_creation_input_tokens": 7895
+  },
+  {
+    "t": 153.996,
+    "kind": "model_thinking",
+    "turn": 7,
+    "text": " I'm seeing the pattern now\u2014I need to build an extractor that handles the conversation API responses. For each request with `action: \"next\"`, I'll pull the user message from the request body and then parse the SSE stream to reconstruct what the assistant said by tracking message IDs and accumulating text chunks for each response.\n\nThe key insight is that when a delta event has `p: \"\"` and `o: \"add\"`, it establishes a new message context with a chunk counter `c`. Subsequent operations like appending to `/message/content/parts/0` apply to that current message, and when a new add event arrives, it shifts the context to the next message. So I need to track which message is \"current\" based on these add operations, then collect all text appends for assistant messages with `recipient == \"all\"`.\n\nWriting the parser... Writing parsing logic... Writing extraction logic...\n\nNow I'm realizing I need to be careful about timestamp monotonicity. The user timestamps come from the create_time field (epoch seconds as a float), while the assistant timestamps are derived from the HAR startedDateTime plus the response duration. These can be very close or even overlap between turns, so I need to ensure each assistant timestamp is strictly greater than its corresponding user timestamp, and ideally that the sequence stays monotonic across turns. Let me use the maximum of user_ts plus one second or the HAR start time plus duration to guarantee proper ordering."
+  },
+  {
+    "t": 154.0,
+    "kind": "tool_call",
+    "turn": 7,
+    "tool": "write_extractor",
+    "input": {
+      "code": "#!/usr/bin/env python3\n\"\"\"Extract a chat log from a ChatGPT HAR capture.\n\nThe HAR records POST requests to https://chatgpt.com/backend-api/f/conversation\nwith `Content-Type: application/json` and `accept: text/event-stream`.\n\nEach such entry carries:\n  - one USER turn in the JSON request body:\n      messages[0].content.parts[0]  (text)\n      messages[0].create_time       (float epoch seconds)\n  - one ASSISTANT turn streamed back as SSE using the\n    delta_encoding \"v1\" patch format:\n      * Each delta event's data is JSON.\n      * `{\"p\": \"\", \"o\": \"add\", \"v\": {\"message\": {...}, ...}}` introduce...[+9075 chars]"
+    },
+    "id": "toolu_01TPP7AkGnaTVyZLEE9Ve45B"
+  },
+  {
+    "t": 154.026,
+    "kind": "tool_result",
+    "turn": 7,
+    "tool": "write_extractor",
+    "id": "toolu_01TPP7AkGnaTVyZLEE9Ve45B",
+    "result": {
+      "ok": true,
+      "wrote": true,
+      "path": "generated/chatgpt_extractor.py",
+      "bytes": 9675
+    }
+  },
+  {
+    "t": 154.028,
+    "kind": "model_request",
+    "turn": 8,
+    "messages_count": 17
+  },
+  {
+    "t": 156.894,
+    "kind": "model_response",
+    "turn": 8,
+    "stop_reason": "tool_use",
+    "input_tokens": 1,
+    "output_tokens": 44,
+    "cache_read_input_tokens": 38427,
+    "cache_creation_input_tokens": 7976
+  },
+  {
+    "t": 156.896,
+    "kind": "tool_call",
+    "turn": 8,
+    "tool": "run_extractor",
+    "input": {},
+    "id": "toolu_01LKcaz3UvAdovPqjTgg3CnH"
+  },
+  {
+    "t": 157.111,
+    "kind": "tool_result",
+    "turn": 8,
+    "tool": "run_extractor",
+    "id": "toolu_01LKcaz3UvAdovPqjTgg3CnH",
+    "result": {
+      "ok": true,
+      "stdout": "",
+      "stderr": "",
+      "error": null,
+      "output_summary": {
+        "turns": 6,
+        "first_turn": {
+          "turn": 0,
+          "role": "user",
+          "content": "who is the first prime minister of india?",
+          "endpoint": "https://chatgpt.com/backend-api/f/conversation",
+          "timestamp": 1780121329
+        },
+        "last_turn": {
+          "turn": 5,
+          "role": "assistant",
+          "content": "The first President of India was \ue200entity\ue202[\"politician\",\"Rajendra Prasad\",\"First President of India\"]\ue201.\n\nHe assumed office on **26 January 1950**, when India became a republic and the Constitution came into effect.\n\nSome key facts:\n- Before becoming President, he was a prominent leader in India's independence movement and worked closely with \ue200entity\ue202[\"politician\",\"Mahatma Gandhi\",\"Leader of the Ind...[+875 chars]",
+          "endpoint": "https://chatgpt.com/backend-api/f/conversation",
+          "timestamp": 1780121394
+        }
+      }
+    }
+  },
+  {
+    "t": 157.112,
+    "kind": "model_request",
+    "turn": 9,
+    "messages_count": 19
+  },
+  {
+    "t": 159.328,
+    "kind": "model_response",
+    "turn": 9,
+    "stop_reason": "tool_use",
+    "input_tokens": 1,
+    "output_tokens": 44,
+    "cache_read_input_tokens": 46403,
+    "cache_creation_input_tokens": 419
+  },
+  {
+    "t": 159.33,
+    "kind": "tool_call",
+    "turn": 9,
+    "tool": "verify_structure",
+    "input": {},
+    "id": "toolu_01SzGb6wVSSwk1UoFtCErMgn"
+  },
+  {
+    "t": 159.331,
+    "kind": "tool_result",
+    "turn": 9,
+    "tool": "verify_structure",
+    "id": "toolu_01SzGb6wVSSwk1UoFtCErMgn",
+    "result": {
+      "ok": true,
+      "structural_issues": [],
+      "summary": {
+        "turns": 6,
+        "user_turns": 3,
+        "assistant_turns": 3
+      }
+    }
+  },
+  {
+    "t": 159.332,
+    "kind": "model_request",
+    "turn": 10,
+    "messages_count": 21
+  },
+  {
+    "t": 165.246,
+    "kind": "model_response",
+    "turn": 10,
+    "stop_reason": "tool_use",
+    "input_tokens": 1,
+    "output_tokens": 254,
+    "cache_read_input_tokens": 46822,
+    "cache_creation_input_tokens": 105
+  },
+  {
+    "t": 165.249,
+    "kind": "tool_call",
+    "turn": 10,
+    "tool": "finalize",
+    "input": {
+      "note": "Extracts ChatGPT chat from POSTs to /backend-api/f/conversation. User turn = messages[0].content.parts[0] in the JSON request body (timestamp = create_time). Assistant turn = SSE delta_encoding v1 stream parsed by tracking the most-recently-added message and appending text per `/message/content/parts/0` append ops (handling direct, batched-patch, and shorthand `{\\\"v\\\":...}` continuations); the visible answer is the message with role=assistant, recipient=all, content_type=text. Timestamps enforced strictly monotonic."
+    },
+    "id": "toolu_01WpBYpXcXQMCMCu8Hm1rMn6"
+  },
+  {
+    "t": 165.251,
+    "kind": "tool_result",
+    "turn": 10,
+    "tool": "finalize",
+    "id": "toolu_01WpBYpXcXQMCMCu8Hm1rMn6",
+    "result": {
+      "ok": true,
+      "note": "Extracts ChatGPT chat from POSTs to /backend-api/f/conversation. User turn = messages[0].content.parts[0] in the JSON request body (timestamp = create_time). Assistant turn = SSE delta_encoding v1 stream parsed by tracking the most-recently-added message and appending text per `/message/content/parts/0` append ops (handling direct, batched-patch, and shorthand `{\\\"v\\\":...}` continuations); the visible answer is the message with role=assistant, recipient=all, content_type=text. Timestamps enforced strictly monotonic.",
+      "summary": {
+        "turns": 6,
+        "user_turns": 3,
+        "assistant_turns": 3,
+        "ground_truth_matched": 0,
+        "ground_truth_total": 0
+      }
+    }
+  },
+  {
+    "t": 165.252,
+    "kind": "finalize_observed",
+    "turn": 10,
+    "note": "Extracts ChatGPT chat from POSTs to /backend-api/f/conversation. User turn = messages[0].content.parts[0] in the JSON request body (timestamp = create_time). Assistant turn = SSE delta_encoding v1 stream parsed by tracking the most-recently-added message and appending text per `/message/content/parts/0` append ops (handling direct, batched-patch, and shorthand `{\\\"v\\\":...}` continuations); the visible answer is the message with role=assistant, recipient=all, content_type=text. Timestamps enforced strictly monotonic."
+  },
+  {
+    "t": 165.253,
+    "kind": "run_end",
+    "finalized": true,
+    "finalize_note": "Extracts ChatGPT chat from POSTs to /backend-api/f/conversation. User turn = messages[0].content.parts[0] in the JSON request body (timestamp = create_time). Assistant turn = SSE delta_encoding v1 stream parsed by tracking the most-recently-added message and appending text per `/message/content/parts/0` append ops (handling direct, batched-patch, and shorthand `{\\\"v\\\":...}` continuations); the visible answer is the message with role=assistant, recipient=all, content_type=text. Timestamps enforced strictly monotonic.",
+    "turns_used": 11,
+    "extractor_path": "generated/chatgpt_extractor.py",
+    "last_model_text": "",
+    "llm_provider": "claude",
+    "model": "claude-opus-4-7"
+  },
+  {
+    "t": 165.483,
+    "kind": "post_hoc_ground_truth_verify",
+    "ok": true,
+    "ground_truth_diff": [
+      {
+        "prompt_index": 0,
+        "prompt": "who is the first prime minister of india?",
+        "matched": true,
+        "user_turn": 0
+      },
+      {
+        "prompt_index": 1,
+        "prompt": "then can I know the first woman prime minister of india?",
+        "matched": true,
+        "user_turn": 1
+      },
+      {
+        "prompt_index": 2,
+        "prompt": "got it, then who is the first president of India?",
+        "matched": true,
+        "user_turn": 2
+      }
+    ],
+    "structural_issues": [],
+    "summary": {
+      "turns": 6,
+      "user_turns": 3,
+      "assistant_turns": 3,
+      "ground_truth_matched": 3,
+      "ground_truth_total": 3
+    }
+  }
+]
